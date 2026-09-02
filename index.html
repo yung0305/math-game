@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>觸控數數大冒險 - 互動教學系統</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* 防止選取文字與各種瀏覽器預設的觸控滑動行為 */
+    body {
+      touch-action: none;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      overflow: hidden;
+      background-color: #f8fafc;
+    }
+    
+    /* 隱藏捲軸但允許內容滾動 */
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .hide-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    /* 記憶遊戲專用 3D 效果與搖晃動畫 */
+    .preserve-3d {
+      transform-style: preserve-3d;
+    }
+    @keyframes shake {
+      10%, 90% { transform: translate3d(-1px, 0, 0); }
+      20%, 80% { transform: translate3d(2px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+      40%, 60% { transform: translate3d(4px, 0, 0); }
+    }
+    .animate-shake {
+      animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+    
+    // --- 設定主題圖庫 ---
+    const INITIAL_THEMES = {
+      fruits: { name: '🍎 水果派對', icons: ['🍎', '🍌', '🍇', '🍓', '🍊', '🍉', '🍍'] },
+      animals: { name: '🐶 可愛動物', icons: ['🐶', '🐱', '🐰', '🐼', '🦊', '🐷', '🐸'] },
+      vehicles: { name: '🚗 交通工具', icons: ['🚗', '🚌', '🚓', '🚑', '🚜', '🛵', '✈️'] },
+      monsters: { name: '👾 奇幻怪獸', icons: ['👾', '👽', '👻', '🤖', '🎃', '🤡', '👹'] }
+    };
+    
+    const PLAYER_COLORS = [
+      { bg: 'bg-red-100', border: 'border-red-500', text: 'text-red-700', active: 'bg-red-500', stroke: '#ef4444' },
+      { bg: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700', active: 'bg-blue-500', stroke: '#3b82f6' },
+      { bg: 'bg-green-100', border: 'border-green-500', text: 'text-green-700', active: 'bg-green-500', stroke: '#22c55e' },
+      { bg: 'bg-yellow-100', border: 'border-yellow-500', text: 'text-yellow-700', active: 'bg-yellow-500', stroke: '#eab308' }
+    ];
+
+    // --- 預設的 GitHub (遠端) 主題檔案清單 ---
+    const PRESET_CLOUD_THEMES = [
+      { filename: 'math game.json', label: '📦 數學與生活擴充包 (math game)' },
+      { filename: 'themes-holiday.json', label: '📦 節慶主題包 (範例)' }
+    ];
+    
+    function App() {
+      const [themes, setThemes] = useState(() => {
+        try {
+          const saved = localStorage.getItem('customThemes');
+          return saved ? JSON.parse(saved) : INITIAL_THEMES;
+        } catch (e) {
+          return INITIAL_THEMES;
+        }
+      });
+      
+      useEffect(() => {
+        try {
+          localStorage.setItem('customThemes', JSON.stringify(themes));
+        } catch (e) {}
+      }, [themes]);
+      
+      const [gameState, setGameState] = useState('setup'); 
+      const [settings, setSettings] = useState({
+        gameMode: 'whack',   
+        players: 2,
+        theme: 'fruits',
+        targetCount: 15,     
+        findTarget: themes['fruits']?.icons[0] || '🍎',    
+        findQuantity: 5,     
+        gameTime: 30,        
+        difficulty: 'normal',
+        memoryTargets: themes['fruits']?.icons.slice(0, 4) || ['🍎', '🍌', '🍇', '🍓'],
+        sortThemes: Object.keys(themes).slice(0, 2),
+        gridSize: 3,
+        gridContent: 'number', // 數字、注音、字母、星座、生肖
+        gridTotalCount: 12
+      });
+
+      const [winners, setWinners] = useState([]);
+      const [scores, setScores] = useState({});
+
+      const handlePlayerFinish = useCallback((playerId, finalScore = 0) => {
+        if (settings.gameMode === 'whack' || settings.gameMode === 'sort') {
+          setScores(prev => {
+            const newScores = { ...prev, [playerId]: finalScore };
+            if (Object.keys(newScores).length === settings.players) {
+              const rankedIds = Object.entries(newScores)
+                .sort(([, scoreA], [, scoreB]) => scoreB - scoreA) 
+                .map(([id]) => parseInt(id));
+              setWinners(rankedIds);
+              setTimeout(() => setGameState('finished'), 1000);
+            }
+            return newScores;
+          });
+        } else {
+          setWinners(prev => {
+            if (!prev.includes(playerId)) {
+              const newWinners = [...prev, playerId];
+              if(finalScore > 0) {
+                 setScores(s => ({...s, [playerId]: finalScore}));
+              }
+              if (newWinners.length === settings.players) {
+                  setTimeout(() => setGameState('finished'), 1000);
+              }
+              return newWinners;
+            }
+            return prev;
+          });
+        }
+      }, [settings.players, settings.gameMode]);
+
+      const startGame = () => {
+        setWinners([]);
+        setScores({});
+        setGameState('playing');
+      };
+
+      const resetGame = () => {
+        setWinners([]);
+        setScores({});
+        setGameState('setup');
+      };
+
+      return (
+        <div className="w-full h-screen bg-slate-50 font-sans overflow-hidden flex flex-col">
+          {gameState === 'setup' && (
+            <SetupScreen settings={settings} setSettings={setSettings} themes={themes} onStart={startGame} onAdmin={() => setGameState('admin')} />
+          )}
+          
+          {gameState === 'playing' && (
+            <GameScreen settings={settings} themes={themes} onFinish={handlePlayerFinish} onBack={resetGame} />
+          )}
+
+          {gameState === 'finished' && (
+            <ResultScreen winners={winners} scores={scores} settings={settings} onRestart={() => setGameState('playing')} onHome={resetGame} />
+          )}
+
+          {gameState === 'admin' && (
+            <AdminScreen 
+              themes={themes} 
+              setThemes={setThemes} 
+              onBack={() => {
+                setSettings(prev => {
+                  let currentThemeKey = prev.theme;
+                  if (!themes[currentThemeKey]) currentThemeKey = Object.keys(themes)[0] || 'fruits';
+                  return {
+                    ...prev, theme: currentThemeKey,
+                    findTarget: themes[currentThemeKey]?.icons.includes(prev.findTarget) ? prev.findTarget : (themes[currentThemeKey]?.icons[0] || '🍎'),
+                    memoryTargets: themes[currentThemeKey]?.icons.slice(0, 4) || ['🍎', '🍌', '🍇', '🍓'],
+                    sortThemes: Object.keys(themes).slice(0, 2)
+                  };
+                });
+                setGameState('setup');
+              }} 
+            />
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 1. 設定畫面元件
+    // ==========================================
+    function SetupScreen({ settings, setSettings, themes, onStart, onAdmin }) {
+      const updateSetting = (key, value) => {
+        setSettings(prev => {
+          const newSettings = { ...prev, [key]: value };
+          if (key === 'theme') {
+            newSettings.findTarget = themes[value]?.icons[0] || '🍎';
+            newSettings.memoryTargets = themes[value]?.icons.slice(0, 4) || [];
+          }
+          return newSettings;
+        });
+      };
+
+      const adjustCount = (amount, min, max, field) => {
+        let newCount = settings[field] + amount;
+        if (newCount < min) newCount = min;
+        if (newCount > max) newCount = max;
+        updateSetting(field, newCount);
+      };
+
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-indigo-100 to-purple-100 p-4 md:p-8 relative">
+          <button onClick={onAdmin} className="absolute top-4 right-4 bg-white/80 hover:bg-white backdrop-blur-md px-4 py-2 rounded-full text-indigo-800 font-bold shadow-sm transition-all border border-indigo-200 flex items-center gap-2 z-10">
+            <i className="fa-solid fa-gear text-xl"></i> <span className="hidden md:inline">主題管理庫</span>
+          </button>
+
+          <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full max-w-6xl border-4 border-indigo-200 flex flex-col h-full max-h-[95vh]">
+            
+            {/* 遊戲模式切換 */}
+            <div className="flex justify-center mb-6 gap-2 md:gap-4 flex-wrap">
+              <button onClick={() => updateSetting('gameMode', 'count')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'count' ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-indigo-50 text-indigo-400 hover:bg-indigo-100'}`}>
+                <i className="fa-solid fa-bullseye text-xl md:text-2xl"></i> 數數
+              </button>
+              <button onClick={() => updateSetting('gameMode', 'find')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'find' ? 'bg-pink-600 text-white shadow-lg scale-105' : 'bg-pink-50 text-pink-400 hover:bg-pink-100'}`}>
+                <i className="fa-solid fa-magnifying-glass text-xl md:text-2xl"></i> 注意力
+              </button>
+              <button onClick={() => updateSetting('gameMode', 'whack')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'whack' ? 'bg-amber-500 text-white shadow-lg scale-105' : 'bg-amber-50 text-amber-400 hover:bg-amber-100'}`}>
+                <i className="fa-solid fa-bolt text-xl md:text-2xl"></i> 打地鼠
+              </button>
+              <button onClick={() => updateSetting('gameMode', 'memory')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'memory' ? 'bg-teal-600 text-white shadow-lg scale-105' : 'bg-teal-50 text-teal-400 hover:bg-teal-100'}`}>
+                <i className="fa-solid fa-clone text-xl md:text-2xl"></i> 記憶配對
+              </button>
+              <button onClick={() => updateSetting('gameMode', 'sort')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'sort' ? 'bg-cyan-600 text-white shadow-lg scale-105' : 'bg-cyan-50 text-cyan-400 hover:bg-cyan-100'}`}>
+                <i className="fa-solid fa-arrows-down-to-line text-xl md:text-2xl"></i> 快速分類
+              </button>
+              <button onClick={() => updateSetting('gameMode', 'grid')} className={`flex items-center gap-2 px-3 py-2 md:px-5 md:py-3 rounded-full text-lg md:text-xl font-bold transition-all ${settings.gameMode === 'grid' ? 'bg-fuchsia-600 text-white shadow-lg scale-105' : 'bg-fuchsia-50 text-fuchsia-400 hover:bg-fuchsia-100'}`}>
+                <i className="fa-solid fa-border-all text-xl md:text-2xl"></i> 格子趣
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-y-auto pr-2 hide-scrollbar">
+              
+              {/* 左側：通用與專屬設定 */}
+              <div className="space-y-6">
+                {/* 玩家人數設定 */}
+                <div className="bg-indigo-50 p-5 rounded-2xl">
+                  <h2 className="text-xl md:text-2xl font-bold text-indigo-900 mb-4 flex items-center gap-2">
+                    <i className="fa-solid fa-users text-2xl"></i> 玩家人數
+                  </h2>
+                  <div className="flex justify-between gap-3">
+                    {[1, 2, 3, 4].map(num => (
+                      <button key={`player-${num}`} onClick={() => updateSetting('players', num)} className={`flex-1 py-3 md:py-4 text-2xl md:text-3xl font-bold rounded-xl transition-all ${settings.players === num ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-white text-indigo-400 border-2 border-indigo-200'}`}>
+                        {num} 人
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 依據遊戲模式顯示不同設定 */}
+                {settings.gameMode === 'count' && (
+                  <div className="bg-pink-50 p-5 rounded-2xl animate-[fadeIn_0.3s_ease-in-out]">
+                    <h2 className="text-xl md:text-2xl font-bold text-pink-900 mb-4 flex items-center gap-2">
+                      <i className="fa-solid fa-bullseye text-2xl"></i> 點數總數量 (1-99)
+                    </h2>
+                    <div className="flex items-center justify-center gap-4">
+                      <button onClick={() => adjustCount(-5, 1, 99, 'targetCount')} className="w-12 h-12 rounded-full bg-white border-2 border-pink-300 text-pink-600 text-xl font-bold shadow-sm">-5</button>
+                      <button onClick={() => adjustCount(-1, 1, 99, 'targetCount')} className="w-12 h-12 rounded-full bg-white border-2 border-pink-300 text-pink-600 text-xl font-bold shadow-sm">-</button>
+                      <div className="w-24 h-16 bg-white rounded-2xl flex items-center justify-center shadow-inner border-4 border-pink-200"><span className="text-4xl font-black text-pink-600">{settings.targetCount}</span></div>
+                      <button onClick={() => adjustCount(1, 1, 99, 'targetCount')} className="w-12 h-12 rounded-full bg-white border-2 border-pink-300 text-pink-600 text-xl font-bold shadow-sm">+</button>
+                      <button onClick={() => adjustCount(5, 1, 99, 'targetCount')} className="w-12 h-12 rounded-full bg-white border-2 border-pink-300 text-pink-600 text-xl font-bold shadow-sm">+5</button>
+                    </div>
+                  </div>
+                )}
+
+                {settings.gameMode === 'find' && (
+                  <div className="bg-orange-50 p-5 rounded-2xl space-y-6 animate-[fadeIn_0.3s_ease-in-out]">
+                    <div>
+                      <h2 className="text-xl md:text-2xl font-bold text-orange-900 mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-magnifying-glass text-2xl"></i> 找尋標的
+                      </h2>
+                      <div className="flex flex-wrap gap-2 bg-white p-3 rounded-xl border-2 border-orange-200">
+                        {themes[settings.theme]?.icons.map(icon => (
+                          <button key={`target-${icon}`} onClick={() => updateSetting('findTarget', icon)} className={`text-4xl p-2 rounded-xl transition-all ${settings.findTarget === icon ? 'bg-orange-200 scale-125 border-2 border-orange-400 shadow-md' : 'hover:bg-orange-100 opacity-60'}`}>{icon}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                        <h2 className="text-xl md:text-2xl font-bold text-orange-900 mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-trophy text-2xl"></i> 標的數量 (1-10)
+                      </h2>
+                      <div className="flex items-center justify-center gap-6">
+                        <button onClick={() => adjustCount(-1, 1, 10, 'findQuantity')} className="w-14 h-14 rounded-full bg-white border-2 border-orange-300 text-orange-600 text-2xl font-bold shadow-sm">-</button>
+                        <div className="w-24 h-16 bg-white rounded-2xl flex items-center justify-center shadow-inner border-4 border-orange-200"><span className="text-4xl font-black text-orange-600">{settings.findQuantity}</span></div>
+                        <button onClick={() => adjustCount(1, 1, 10, 'findQuantity')} className="w-14 h-14 rounded-full bg-white border-2 border-orange-300 text-orange-600 text-2xl font-bold shadow-sm">+</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {settings.gameMode === 'whack' && (
+                  <div className="bg-amber-50 p-5 rounded-2xl space-y-6 animate-[fadeIn_0.3s_ease-in-out]">
+                    <div>
+                      <h2 className="text-xl md:text-2xl font-bold text-amber-900 mb-4 flex items-center gap-2">
+                          <i className="fa-solid fa-magnifying-glass text-2xl"></i> 要打擊的標的 (打錯會扣分)
+                      </h2>
+                      <div className="flex flex-wrap gap-2 bg-white p-3 rounded-xl border-2 border-amber-200">
+                        {themes[settings.theme]?.icons.map(icon => (
+                             <button key={`target-${icon}`} onClick={() => updateSetting('findTarget', icon)} className={`text-4xl p-2 rounded-xl transition-all ${settings.findTarget === icon ? 'bg-amber-200 scale-125 border-2 border-amber-400 shadow-md' : 'hover:bg-amber-100 opacity-60'}`}>{icon}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <h2 className="text-lg font-bold text-amber-900 mb-3 flex items-center gap-2">
+                          <i className="fa-solid fa-stopwatch text-xl"></i> 遊戲時間
+                        </h2>
+                        <div className="flex flex-col gap-2">
+                          {[15, 30, 60].map(time => (
+                            <button key={`time-${time}`} onClick={() => updateSetting('gameTime', time)} className={`py-2 rounded-xl font-bold text-lg border-2 ${settings.gameTime === time ? 'bg-amber-500 border-amber-600 text-white shadow-md' : 'bg-white border-amber-200 text-amber-600'}`}>{time} 秒</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-amber-900 mb-3 flex items-center gap-2">
+                          <i className="fa-solid fa-gauge-high text-xl"></i> 出現難度
+                        </h2>
+                        <div className="flex flex-col gap-2">
+                          {['easy', 'normal', 'hard'].map(diff => {
+                            const labels = { easy: '🟢 簡單 (慢)', normal: '🟡 普通', hard: '🔴 困難 (快)' };
+                            return <button key={diff} onClick={() => updateSetting('difficulty', diff)} className={`py-2 rounded-xl font-bold text-lg border-2 ${settings.difficulty === diff ? 'bg-amber-500 border-amber-600 text-white shadow-md' : 'bg-white border-amber-200 text-amber-600'}`}>{labels[diff]}</button>
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {settings.gameMode === 'memory' && (
+                  <div className="bg-teal-50 p-5 rounded-2xl space-y-6 animate-[fadeIn_0.3s_ease-in-out]">
+                    <div>
+                        <h2 className="text-xl md:text-2xl font-bold text-teal-900 mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-check-double text-2xl"></i> 勾選出場標的 (至少2種)
+                      </h2>
+                      <div className="flex flex-wrap gap-2 bg-white p-3 rounded-xl border-2 border-teal-200">
+                        {themes[settings.theme]?.icons.map(icon => {
+                          const isSelected = settings.memoryTargets?.includes(icon);
+                          return (
+                              <button 
+                              key={`mem-target-${icon}`} 
+                              onClick={() => {
+                                  let newTargets = [...(settings.memoryTargets || [])];
+                                  if (isSelected) {
+                                      if (newTargets.length > 2) newTargets = newTargets.filter(i => i !== icon);
+                                  } else {
+                                      newTargets.push(icon);
+                                  }
+                                  updateSetting('memoryTargets', newTargets);
+                              }} 
+                              className={`text-4xl p-2 rounded-xl transition-all ${isSelected ? 'bg-teal-200 scale-110 border-2 border-teal-400 shadow-md' : 'hover:bg-teal-100 opacity-40 grayscale'}`}
+                            >
+                              {icon}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {settings.gameMode === 'sort' && (
+                  <div className="bg-cyan-50 p-5 rounded-2xl space-y-6 animate-[fadeIn_0.3s_ease-in-out]">
+                    <div>
+                        <h2 className="text-xl md:text-2xl font-bold text-cyan-900 mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-box-archive text-2xl"></i> 選擇分類主題 (建議 2~4 種)
+                      </h2>
+                      <div className="flex flex-col gap-2 bg-white p-3 rounded-xl border-2 border-cyan-200">
+                         {Object.entries(themes).map(([key, theme]) => {
+                          const isSelected = settings.sortThemes?.includes(key);
+                          return (
+                              <button 
+                              key={`sort-theme-${key}`} 
+                              onClick={() => {
+                                  let newThemes = [...(settings.sortThemes || [])];
+                                  if (isSelected) {
+                                      if (newThemes.length > 2) newThemes = newThemes.filter(k => k !== key);
+                                  } else {
+                                      if (newThemes.length < 4) newThemes.push(key);
+                                  }
+                                  updateSetting('sortThemes', newThemes);
+                              }} 
+                              className={`text-left flex items-center justify-between p-3 rounded-xl transition-all border-2 ${isSelected ? 'bg-cyan-200 border-cyan-400 shadow-sm scale-[1.02]' : 'bg-slate-50 border-transparent hover:bg-cyan-50 opacity-60 grayscale'}`}
+                            >
+                               <span className="font-bold text-lg md:text-xl text-slate-800">{theme.name}</span>
+                              <span className="text-2xl tracking-widest">{theme.icons.slice(0,3).join('')}</span>
+                            </button>
+                           )
+                        })}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                         <div>
+                        <h2 className="text-lg font-bold text-cyan-900 mb-3 flex items-center gap-2">
+                          <i className="fa-solid fa-stopwatch text-xl"></i> 遊戲時間
+                         </h2>
+                         <div className="flex flex-col gap-2">
+                          {[30, 60, 90].map(time => (
+                            <button key={`time-${time}`} onClick={() => updateSetting('gameTime', time)} className={`py-2 rounded-xl font-bold text-lg border-2 ${settings.gameTime === time ? 'bg-cyan-500 border-cyan-600 text-white shadow-md' : 'bg-white border-cyan-200 text-cyan-600'}`}>{time} 秒</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-cyan-900 mb-3 flex items-center gap-2">
+                          <i className="fa-solid fa-gauge-high text-xl"></i> 軌道速度
+                        </h2>
+                        <div className="flex flex-col gap-2">
+                          {['easy', 'normal', 'hard'].map(diff => {
+                            const labels = { easy: '🟢 慢速', normal: '🟡 中速', hard: '🔴 快速' };
+                            return <button key={diff} onClick={() => updateSetting('difficulty', diff)} className={`py-2 rounded-xl font-bold text-lg border-2 ${settings.difficulty === diff ? 'bg-cyan-500 border-cyan-600 text-white shadow-md' : 'bg-white border-cyan-200 text-cyan-600'}`}>{labels[diff]}</button>
+                          })}
+                        </div>
+                       </div>
+                    </div>
+                 </div>
+                )}
+                
+                {settings.gameMode === 'grid' && (
+                  <div className="bg-fuchsia-50 p-5 rounded-2xl space-y-6 animate-[fadeIn_0.3s_ease-in-out]">
+                    <div>
+                      <h2 className="text-xl md:text-2xl font-bold text-fuchsia-900 mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-font text-2xl"></i> 內容類別
+                      </h2>
+                      <div className="flex flex-wrap gap-2 md:gap-3">
+                        {[
+                          { id: 'number', label: '123 數字' },
+                          { id: 'bopomofo', label: 'ㄅㄆㄇ 注音' },
+                          { id: 'alphabet', label: 'ABC 字母' },
+                          { id: 'zodiac', label: '♈ 星座' },
+                          { id: 'animal', label: '🐀 生肖' }
+                        ].map(opt => (
+                          <button
+                            key={`grid-content-${opt.id}`}
+                            onClick={() => {
+                              let defaultCount = 9;
+                              if (opt.id === 'zodiac' || opt.id === 'animal') defaultCount = 12;
+                              else if (opt.id === 'alphabet') defaultCount = 26;
+                              else if (opt.id === 'bopomofo') defaultCount = 37;
+                              
+                              setSettings(prev => ({...prev, gridContent: opt.id, gridTotalCount: defaultCount}));
+                            }}
+                            className={`px-3 py-2 md:px-4 md:py-2 rounded-xl font-bold text-base md:text-lg border-2 transition-all ${settings.gridContent === opt.id ? 'bg-fuchsia-500 border-fuchsia-600 text-white shadow-md scale-105' : 'bg-white border-fuchsia-200 text-fuchsia-600 hover:bg-fuchsia-100'}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div>
+                      {settings.gridContent === 'number' ? (
+                          <h2 className="text-xl md:text-2xl font-bold text-fuchsia-900 mb-4 flex items-center gap-2">
+                            <i className="fa-solid fa-border-all text-2xl"></i> 格子大小
+                          </h2>
+                      ) : (
+                          <h2 className="text-xl md:text-2xl font-bold text-fuchsia-900 mb-4 flex items-center gap-2">
+                            <i className="fa-solid fa-border-all text-2xl"></i> 出現數量
+                          </h2>
+                      )}
+                      <div className="flex flex-wrap gap-3">
+                        {settings.gridContent === 'number' ? (
+                            [3, 4, 5, 6, 7].map(size => (
+                              <button
+                                key={`grid-size-${size}`}
+                                onClick={() => updateSetting('gridSize', size)}
+                                className={`px-4 py-2 rounded-xl font-bold text-lg md:text-xl border-2 transition-all ${settings.gridSize === size ? 'bg-fuchsia-500 border-fuchsia-600 text-white shadow-md scale-105' : 'bg-white border-fuchsia-200 text-fuchsia-600 hover:bg-fuchsia-100'}`}
+                              >
+                                {size} x {size}
+                              </button>
+                            ))
+                        ) : (
+                            (settings.gridContent === 'zodiac' || settings.gridContent === 'animal' ? [6, 9, 12] : 
+                             settings.gridContent === 'alphabet' ? [9, 16, 20, 26] : [9, 16, 25, 37]).map(count => (
+                              <button
+                                key={`grid-count-${count}`}
+                                onClick={() => updateSetting('gridTotalCount', count)}
+                                className={`px-4 py-2 rounded-xl font-bold text-lg md:text-xl border-2 transition-all ${settings.gridTotalCount === count ? 'bg-fuchsia-500 border-fuchsia-600 text-white shadow-md scale-105' : 'bg-white border-fuchsia-200 text-fuchsia-600 hover:bg-fuchsia-100'}`}
+                              >
+                                {count} 個
+                              </button>
+                            ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 右側：主題選擇與開始 */}
+              <div className="space-y-6 flex flex-col h-full">
+                {(settings.gameMode !== 'sort' && settings.gameMode !== 'grid') && (
+                  <div className="bg-emerald-50 p-5 rounded-2xl flex-1 overflow-y-auto hide-scrollbar">
+                   <h2 className="text-xl md:text-2xl font-bold text-emerald-900 mb-4">選擇主題圖庫</h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.entries(themes).map(([key, theme]) => (
+                        <button key={key} onClick={() => updateSetting('theme', key)} className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all border-4 ${settings.theme === key ? 'border-emerald-500 bg-emerald-100 shadow-md scale-105' : 'border-transparent bg-white hover:bg-emerald-50'}`}>
+                          <span className="text-3xl mb-1">{theme.icons[0]}{theme.icons[1]}</span>
+                          <span className="text-lg font-bold text-emerald-800">{theme.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button onClick={onStart} className={`w-full py-5 text-white rounded-2xl text-3xl font-black shadow-xl hover:shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 ${(settings.gameMode === 'sort' || settings.gameMode === 'grid') ? 'mt-auto' : ''} ${settings.gameMode === 'count' ? 'bg-indigo-600' : settings.gameMode === 'find' ? 'bg-pink-600' : settings.gameMode === 'memory' ? 'bg-teal-600' : settings.gameMode === 'sort' ? 'bg-cyan-600' : settings.gameMode === 'grid' ? 'bg-fuchsia-600' : 'bg-amber-500'}`}>
+                  <i className="fa-solid fa-play text-3xl"></i> 開始遊戲
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 2. 遊戲主畫面
+    // ==========================================
+    function GameScreen({ settings, themes, onFinish, onBack }) {
+      const [timeLeft, setTimeLeft] = useState(settings.gameTime);
+      const [isTimeUp, setIsTimeUp] = useState(false);
+      const [gridElapsedMs, setGridElapsedMs] = useState(0);
+
+      useEffect(() => {
+        if (settings.gameMode !== 'whack' && settings.gameMode !== 'sort') return;
+        if (timeLeft > 0) {
+          const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+          return () => clearInterval(timer);
+        } else {
+          setIsTimeUp(true); 
+        }
+      }, [timeLeft, settings.gameMode]);
+      
+      // 遊戲六：碼錶機制
+      useEffect(() => {
+        if (settings.gameMode === 'grid') {
+            const start = Date.now();
+            const timer = setInterval(() => setGridElapsedMs(Date.now() - start), 100);
+            return () => clearInterval(timer);
+        }
+      }, [settings.gameMode]);
+
+      const getGridLayout = () => {
+        switch (settings.players) {
+          case 1: return 'grid-cols-1 grid-rows-1';
+          case 2: return 'grid-cols-2 grid-rows-1';
+          case 3: return 'grid-cols-2 grid-rows-2';
+          case 4: return 'grid-cols-2 grid-rows-2';
+          default: return 'grid-cols-1';
+        }
+      };
+
+      return (
+        <div className="flex-1 relative bg-slate-900 border-none flex flex-col min-h-0">
+          <button onClick={onBack} className="absolute top-4 left-4 z-50 bg-white/20 backdrop-blur-md p-3 rounded-full text-white hover:bg-white/40 transition-all border border-white/30 flex items-center justify-center w-12 h-12">
+            <i className="fa-solid fa-house text-2xl"></i>
+          </button>
+
+          {(settings.gameMode === 'whack' || settings.gameMode === 'sort') && (
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 ${settings.gameMode === 'sort' ? 'border-cyan-500' : 'border-amber-500'} flex items-center gap-3`}>
+              <i className={`fa-regular fa-clock text-3xl ${timeLeft <= 5 ? 'text-red-500 animate-pulse' : (settings.gameMode === 'sort' ? 'text-cyan-600' : 'text-amber-600')}`}></i>
+              <span className={`text-4xl font-black ${timeLeft <= 5 ? 'text-red-600' : (settings.gameMode === 'sort' ? 'text-cyan-700' : 'text-amber-700')}`}>{timeLeft}</span>
+            </div>
+          )}
+          
+          {settings.gameMode === 'grid' && (
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 border-fuchsia-500 flex items-center gap-3`}>
+              <i className="fa-solid fa-stopwatch text-3xl text-fuchsia-600"></i>
+              <span className="text-4xl font-black text-fuchsia-700">{(gridElapsedMs / 1000).toFixed(1)}</span>
+            </div>
+          )}
+
+          <div className={`w-full flex-1 grid gap-2 p-2 min-h-0 ${getGridLayout()}`}>
+            {Array.from({ length: settings.players }).map((_, idx) => (
+              <PlayerZone 
+                key={`zone-${idx}`} 
+                playerId={idx} 
+                colorProfile={PLAYER_COLORS[idx]} 
+                settings={settings}
+                themes={themes}
+                isTimeUp={isTimeUp}
+                onFinish={onFinish}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 3. 獨立玩家區域
+    // ==========================================
+    function PlayerZone({ playerId, colorProfile, settings, themes, isTimeUp, onFinish }) {
+      const [items, setItems] = useState([]);
+      const [counted, setCounted] = useState(0);       
+      const [whackScore, setWhackScore] = useState(0);
+      const [holes, setHoles] = useState(Array.from({ length: 9 }).map((_, i) => ({ id: i, active: false, icon: '', isTarget: false, isError: false, hitEffect: false })));
+      
+      // 記憶遊戲專屬狀態
+      const [memoryCards, setMemoryCards] = useState([]);
+      const [flippedIndices, setFlippedIndices] = useState([]);
+      
+      // 快速分類遊戲專屬狀態
+      const [sortItems, setSortItems] = useState([]);
+      const [dragInfo, setDragInfo] = useState(null);
+      const [feedback, setFeedback] = useState({ themeKey: null, type: null, id: 0 });
+      const activeDragIdRef = useRef(null);
+      const zoneRef = useRef(null);
+      
+      // 格子趣遊戲專屬狀態
+      const [gridItems, setGridItems] = useState([]);
+      const [gridContentMap, setGridContentMap] = useState([]);
+      const [nextGridNum, setNextGridNum] = useState(1);
+      const gridStartTimeRef = useRef(0);
+
+      // 字庫字典
+      const BPMF = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ".split('');
+      const ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
+      const ZODIAC = ['♈\n牡羊', '♉\n金牛', '♊\n雙子', '♋\n巨蟹', '♌\n獅子', '♍\n處女', '♎\n天秤', '♏\n天蠍', '♐\n射手', '♑\n魔羯', '♒\n水瓶', '♓\n雙魚'];
+      const ANIMAL = ['🐀\n鼠', '🐂\n牛', '🐅\n虎', '🐇\n兔', '🐉\n龍', '🐍\n蛇', '🐎\n馬', '🐏\n羊', '🐒\n猴', '🐓\n雞', '🐕\n狗', '🐖\n豬'];
+
+      useEffect(() => {
+        if ((settings.gameMode === 'whack' || settings.gameMode === 'sort') && isTimeUp) {
+          onFinish(playerId, whackScore);
+        }
+      }, [isTimeUp, settings.gameMode, playerId, whackScore, onFinish]);
+
+      // --- 格子趣初始化 ---
+      useEffect(() => {
+        if (settings.gameMode !== 'grid') return;
+        const max = settings.gridContent === 'number' ? settings.gridSize * settings.gridSize : (settings.gridTotalCount || 9);
+        
+        // 生成對應的文字內容表
+        const contentMap = [];
+        for (let i = 0; i < max; i++) {
+            if (settings.gridContent === 'bopomofo') {
+                contentMap.push(BPMF[i % BPMF.length]);
+            } else if (settings.gridContent === 'alphabet') {
+                contentMap.push(ALPHA[i % ALPHA.length]);
+            } else if (settings.gridContent === 'zodiac') {
+                contentMap.push(ZODIAC[i % ZODIAC.length]);
+            } else if (settings.gridContent === 'animal') {
+                contentMap.push(ANIMAL[i % ANIMAL.length]);
+            } else {
+                contentMap.push((i + 1).toString());
+            }
+        }
+        setGridContentMap(contentMap);
+
+        // 生成隨機陣列
+        let arr = Array.from({length: max}, (_, i) => i + 1);
+        for(let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        setGridItems(arr);
+        setNextGridNum(1);
+        gridStartTimeRef.current = Date.now();
+      }, [settings.gameMode, settings.gridSize, settings.gridContent, settings.gridTotalCount]);
+
+      const handleGridClick = (e, num) => {
+        e.preventDefault(); e.stopPropagation();
+        const max = settings.gridContent === 'number' ? settings.gridSize * settings.gridSize : (settings.gridTotalCount || 9);
+        if (num === nextGridNum) {
+            if (num === max) {
+                setNextGridNum(num + 1); // 標記完成
+                const timeTaken = ((Date.now() - gridStartTimeRef.current) / 1000).toFixed(2);
+                onFinish(playerId, parseFloat(timeTaken));
+            } else {
+                setNextGridNum(num + 1);
+            }
+        }
+      };
+
+      // --- 記憶遊戲初始化 ---
+      useEffect(() => {
+        if (settings.gameMode !== 'memory') return;
+        const targets = settings.memoryTargets || ['🍎', '🍌'];
+        const deck = [...targets, ...targets].map((icon, idx) => ({
+          id: `mem-${idx}`,
+          icon: icon,
+          isFlipped: false,
+          isMatched: false,
+          isError: false
+        }));
+        
+        for (let i = deck.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        setMemoryCards(deck);
+      }, [settings.gameMode, settings.memoryTargets]);
+      
+      const handleCardClick = (e, idx) => {
+        e.preventDefault(); e.stopPropagation();
+        if (flippedIndices.length === 2 || memoryCards[idx].isFlipped || memoryCards[idx].isMatched) return;
+        
+        const newFlipped = [...flippedIndices, idx];
+        setFlippedIndices(newFlipped);
+        setMemoryCards(prev => prev.map((card, i) => i === idx ? { ...card, isFlipped: true } : card));
+        
+        if (newFlipped.length === 2) {
+          const [firstIdx, secondIdx] = newFlipped;
+          if (memoryCards[firstIdx].icon === memoryCards[secondIdx].icon) {
+            setWhackScore(s => s + 10);
+            setTimeout(() => {
+              setMemoryCards(prev => {
+                const next = prev.map((card, i) => (i === firstIdx || i === secondIdx) ? { ...card, isMatched: true } : card);
+                if (next.every(c => c.isMatched)) {
+                   setTimeout(() => onFinish(playerId, whackScore + 10), 500);
+                }
+                return next;
+              });
+              setFlippedIndices([]);
+            }, 500);
+          } else {
+            setMemoryCards(prev => prev.map((card, i) => (i === firstIdx || i === secondIdx) ? { ...card, isError: true } : card));
+            setTimeout(() => {
+              setMemoryCards(prev => prev.map((card, i) => (i === firstIdx || i === secondIdx) ? { ...card, isFlipped: false, isError: false } : card));
+              setFlippedIndices([]);
+            }, 1000);
+          }
+        }
+      };
+
+      // --- 快速分類遊戲邏輯 ---
+      useEffect(() => {
+          if (settings.gameMode !== 'sort' || isTimeUp) return;
+
+          const spawnInt = setInterval(() => {
+              const activeThemeKeys = settings.sortThemes && settings.sortThemes.length > 0 ? settings.sortThemes : Object.keys(themes).slice(0, 2);
+              const randomThemeKey = activeThemeKeys[Math.floor(Math.random() * activeThemeKeys.length)];
+              const themeObj = themes[randomThemeKey];
+              const icon = themeObj.icons[Math.floor(Math.random() * themeObj.icons.length)];
+              
+              setSortItems(prev => [...prev, { id: `sort-${Date.now()}-${Math.random()}`, icon, themeKey: randomThemeKey, progress: -10 }]);
+          }, settings.difficulty === 'hard' ? 800 : settings.difficulty === 'easy' ? 2000 : 1200);
+
+          const moveInt = setInterval(() => {
+              setSortItems(prev => prev.map(item => {
+                  if (activeDragIdRef.current === item.id) return item;
+                  return { ...item, progress: item.progress + (settings.difficulty === 'hard' ? 1.2 : settings.difficulty === 'easy' ? 0.4 : 0.8) };
+              }).filter(item => item.progress < 120));
+          }, 30);
+
+          return () => { clearInterval(spawnInt); clearInterval(moveInt); };
+      }, [settings.gameMode, isTimeUp, settings.difficulty, settings.sortThemes, themes]);
+      
+      useEffect(() => {
+         if (feedback.id) {
+             const timer = setTimeout(() => setFeedback({ themeKey: null, type: null, id: 0 }), 500);
+             return () => clearTimeout(timer);
+         }
+      }, [feedback.id]);
+      
+      const handlePointerDownSortItem = (e, item) => {
+          e.preventDefault(); e.stopPropagation();
+          if (isTimeUp) return;
+          const zoneRect = zoneRef.current.getBoundingClientRect();
+          const x = e.clientX - zoneRect.left;
+          const y = e.clientY - zoneRect.top;
+          setDragInfo({
+              id: item.id,
+              x: x,
+              y: y
+          });
+          activeDragIdRef.current = item.id;
+          zoneRef.current.setPointerCapture(e.pointerId);
+      };
+
+      const handlePointerMoveZone = (e) => {
+          if (!dragInfo || settings.gameMode !== 'sort') return;
+          const zoneRect = zoneRef.current.getBoundingClientRect();
+          setDragInfo(prev => ({
+              ...prev,
+              x: e.clientX - zoneRect.left,
+              y: e.clientY - zoneRect.top
+          }));
+      };
+
+      const handlePointerUpZone = (e) => {
+          if (!dragInfo || settings.gameMode !== 'sort') return;
+          zoneRef.current.releasePointerCapture(e.pointerId);
+          
+          const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+          const bin = dropTarget?.closest('[data-bin-theme]');
+
+          const item = sortItems.find(i => i.id === dragInfo.id);
+          if (bin && item) {
+              const binThemeKey = bin.getAttribute('data-bin-theme');
+              const binPlayerId = bin.getAttribute('data-player-id');
+
+              if (parseInt(binPlayerId) === playerId) {
+                  if (binThemeKey === item.themeKey) {
+                      setWhackScore(s => s + 10);
+                      setFeedback({ themeKey: binThemeKey, type: 'success', id: Date.now() });
+                  } else {
+                      setWhackScore(s => Math.max(0, s - 5));
+                      setFeedback({ themeKey: binThemeKey, type: 'error', id: Date.now() });
+                  }
+                  setSortItems(prev => prev.filter(i => i.id !== item.id));
+              }
+          }
+          setDragInfo(null);
+          activeDragIdRef.current = null;
+      };
+
+      // --- 反應打擊遊戲邏輯 ---
+      useEffect(() => {
+        if (settings.gameMode !== 'whack' || isTimeUp) return;
+        
+        const themeIcons = themes[settings.theme]?.icons || ['🍎'];
+        const targetIcon = settings.findTarget;
+        const distractorIcons = themeIcons.filter(i => i !== targetIcon);
+        
+        let popInt = 700, stay = 1000; 
+        if (settings.difficulty === 'easy') { popInt = 1000; stay = 1500; }
+        if (settings.difficulty === 'hard') { popInt = 400; stay = 700; }
+
+        let timeoutIds = [];
+
+        const spawnMole = () => {
+          setHoles(prev => {
+            const available = prev.map((h, i) => !h.active ? i : null).filter(i => i !== null);
+            if (available.length === 0) return prev;
+            
+            const targetIdx = available[Math.floor(Math.random() * available.length)];
+            const isTarget = Math.random() > 0.3; 
+            const icon = isTarget ? targetIcon : (distractorIcons.length > 0 ? distractorIcons[Math.floor(Math.random() * distractorIcons.length)] : targetIcon);
+            const next = [...prev];
+            next[targetIdx] = { ...next[targetIdx], active: true, icon, isTarget, isError: false, hitEffect: false };
+            const hideId = setTimeout(() => {
+              setHoles(curr => {
+                const n = [...curr];
+                if (n[targetIdx].active) {
+                   n[targetIdx] = { ...n[targetIdx], active: false };
+                }
+                return n;
+              });
+            }, stay);
+            timeoutIds.push(hideId);
+
+            return next;
+          });
+        };
+
+        const spawner = setInterval(spawnMole, popInt);
+        return () => {
+          clearInterval(spawner);
+          timeoutIds.forEach(clearTimeout);
+        };
+      }, [settings, isTimeUp, themes]);
+      
+      const handleWhack = (e, idx) => {
+        e.preventDefault(); e.stopPropagation();
+        const hole = holes[idx];
+        if (!hole.active || isTimeUp) return;
+
+        if (hole.isTarget) {
+          setWhackScore(s => s + 10);
+          setHoles(prev => { const n = [...prev]; n[idx] = { ...n[idx], active: false, hitEffect: true }; return n; });
+          setTimeout(() => {
+             setHoles(curr => { const n = [...curr]; n[idx] = { ...n[idx], hitEffect: false }; return n; });
+          }, 500);
+        } else {
+          setWhackScore(s => Math.max(0, s - 5));
+          setHoles(prev => { const n = [...prev]; n[idx] = { ...n[idx], active: false, isError: true }; return n; });
+          setTimeout(() => {
+             setHoles(curr => { const n = [...curr]; n[idx] = { ...n[idx], isError: false }; return n; });
+          }, 300);
+        }
+      };
+
+      // --- 數數與找查遊戲邏輯 ---
+      const finalTargetCount = settings.gameMode === 'count' ? settings.targetCount : settings.findQuantity;
+      useEffect(() => {
+        if (settings.gameMode === 'whack' || settings.gameMode === 'memory' || settings.gameMode === 'sort' || settings.gameMode === 'grid') return; 
+        const newItems = [];
+        const themeIcons = themes[settings.theme]?.icons || ['🍎'];
+        const totalItemsCount = settings.gameMode === 'count' ? settings.targetCount : settings.findQuantity * 6;
+        const density = totalItemsCount * settings.players; 
+        
+        let sizeClass = 'text-5xl w-14 h-14 md:text-7xl md:w-20 md:h-20';
+        let gapClass = 'gap-2 md:gap-4';
+        if (density > 250) { sizeClass = 'text-lg w-6 h-6 md:text-2xl md:w-8 md:h-8'; gapClass = 'gap-0.5 md:gap-1'; }
+        else if (density > 150) { sizeClass = 'text-2xl w-8 h-8 md:text-3xl md:w-10 md:h-10'; gapClass = 'gap-1 md:gap-2'; }
+        else if (density > 80) { sizeClass = 'text-3xl w-10 h-10 md:text-4xl md:w-12 md:h-12'; gapClass = 'gap-1 md:gap-2'; }
+        else if (density > 40) { sizeClass = 'text-4xl w-12 h-12 md:text-5xl md:w-14 md:h-14'; gapClass = 'gap-2 md:gap-3'; }
+
+        if (settings.gameMode === 'count') {
+          for (let i = 0; i < settings.targetCount; i++) {
+            newItems.push({ id: `item-${i}`, icon: themeIcons[Math.floor(Math.random() * themeIcons.length)], isTarget: true, isCounted: false, isError: false, sizeClass });
+          }
+        } else {
+          const distractorIcons = themeIcons.filter(icon => icon !== settings.findTarget);
+          for (let i = 0; i < settings.findQuantity; i++) newItems.push({ id: `target-${i}`, icon: settings.findTarget, isTarget: true, isCounted: false, isError: false, sizeClass });
+          for (let i = 0; i < settings.findQuantity * 5; i++) newItems.push({ id: `distractor-${i}`, icon: distractorIcons[Math.floor(Math.random() * distractorIcons.length)], isTarget: false, isCounted: false, isError: false, sizeClass });
+          for (let i = newItems.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));
+          [newItems[i], newItems[j]] = [newItems[j], newItems[i]]; }
+        }
+        setItems(newItems);
+      }, [settings, themes]);
+
+      const handleItemTap = (e, item) => {
+        e.preventDefault(); e.stopPropagation();
+        if (item.isCounted || settings.gameMode === 'whack' || settings.gameMode === 'memory' || settings.gameMode === 'sort' || settings.gameMode === 'grid') return;
+        if (item.isTarget) {
+          setItems(prev => prev.map(it => {
+            if (it.id === item.id) {
+              const newCounted = counted + 1;
+              setCounted(newCounted);
+              if (newCounted === finalTargetCount) onFinish(playerId); 
+              return { ...it, isCounted: true };
+            }
+            return it;
+          }));
+        } else {
+          setItems(prev => prev.map(it => it.id === item.id ? { ...it, isError: true } : it));
+          setTimeout(() => setItems(prev => prev.map(it => it.id === item.id ? { ...it, isError: false } : it)), 300);
+        }
+      };
+
+      // --- 記憶遊戲動態尺寸計算 ---
+      let memSizeClass = 'w-16 md:w-24';
+      let memTextClass = 'text-4xl md:text-6xl';
+      const memDensity = memoryCards.length * settings.players;
+      
+      if (memDensity >= 56) { memSizeClass = 'w-8 md:w-10'; memTextClass = 'text-xl md:text-2xl'; } 
+      else if (memDensity > 40) { memSizeClass = 'w-10 md:w-12'; memTextClass = 'text-2xl md:text-3xl'; }
+      else if (memDensity > 30) { memSizeClass = 'w-12 md:w-14'; memTextClass = 'text-3xl md:text-4xl'; }
+      else if (memDensity > 15) { memSizeClass = 'w-14 md:w-20'; memTextClass = 'text-4xl md:text-5xl'; }
+      else { memSizeClass = 'w-20 md:w-24'; memTextClass = 'text-5xl md:text-6xl'; }
+
+      let memColsClass = 'grid-cols-2';
+      const totalCards = memoryCards.length;
+      if (totalCards > 12) memColsClass = 'grid-cols-5 md:grid-cols-5';
+      else if (totalCards > 8) memColsClass = 'grid-cols-4 md:grid-cols-4'; 
+      else if (totalCards > 4) memColsClass = 'grid-cols-3 md:grid-cols-3';
+      else memColsClass = 'grid-cols-2 md:grid-cols-2';
+
+      // --- 打地鼠尺寸計算 ---
+      let whackSizeClass = 'max-w-[350px] md:max-w-[450px]';
+      let whackTextClass = 'text-5xl md:text-7xl';
+      if (settings.players > 2) { whackSizeClass = 'max-w-[220px] md:max-w-[300px]'; whackTextClass = 'text-4xl md:text-5xl'; }
+      else if (settings.players === 2) { whackSizeClass = 'max-w-[280px] md:max-w-[400px]'; whackTextClass = 'text-5xl md:text-6xl'; }
+
+      // --- 格子趣樣式輔助計算 ---
+      const maxGrid = settings.gridContent === 'number' ? settings.gridSize * settings.gridSize : (settings.gridTotalCount || 9);
+      const gridCols = Math.ceil(Math.sqrt(maxGrid));
+      const gridRows = Math.ceil(maxGrid / gridCols);
+
+      const getGridTextClass = (maxItems, content) => {
+        const isMulti = settings.players > 2;
+        if (content === 'zodiac' || content === 'animal') {
+            if (maxItems <= 9) return isMulti ? 'text-sm md:text-2xl' : 'text-xl md:text-4xl';
+            return isMulti ? 'text-xs md:text-xl' : 'text-lg md:text-3xl';
+        } else {
+            if (maxItems <= 9) return isMulti ? 'text-3xl md:text-5xl' : 'text-4xl md:text-6xl';
+            if (maxItems <= 16) return isMulti ? 'text-2xl md:text-4xl' : 'text-3xl md:text-5xl';
+            if (maxItems <= 25) return isMulti ? 'text-xl md:text-3xl' : 'text-2xl md:text-4xl';
+            if (maxItems <= 36) return isMulti ? 'text-lg md:text-2xl' : 'text-xl md:text-3xl';
+            return isMulti ? 'text-base md:text-xl' : 'text-lg md:text-2xl';
+        }
+      };
+
+      return (
+        <div 
+           ref={zoneRef}
+           onPointerMove={handlePointerMoveZone}
+           onPointerUp={handlePointerUpZone}
+           onPointerCancel={handlePointerUpZone}
+           className={`relative w-full h-full rounded-3xl overflow-hidden border-8 ${colorProfile.border} ${colorProfile.bg} touch-none flex flex-col`}
+           style={{ touchAction: 'none' }}
+        >
+          {/* 上方資訊欄 */}
+          <div className={`relative w-full shrink-0 p-2 md:p-3 flex justify-between items-center bg-white/80 backdrop-blur-sm z-10 border-b-4 ${colorProfile.border}`}>
+            <div className="flex flex-col">
+               <span className={`text-xl md:text-2xl font-black ${colorProfile.text}`}>玩家 {playerId + 1}</span>
+               {(settings.gameMode === 'find' || settings.gameMode === 'whack') && (
+                 <span className={`text-xs md:text-sm font-bold ${colorProfile.text}/70 flex items-center gap-1`}>
+                   打擊: <span className="text-lg md:text-xl">{settings.findTarget}</span>
+                 </span>
+               )}
+               {(settings.gameMode === 'memory') && (
+                 <span className={`text-xs md:text-sm font-bold ${colorProfile.text}/70 flex items-center gap-1`}>
+                   找出所有成對圖案！
+                 </span>
+               )}
+               {(settings.gameMode === 'sort') && (
+                 <span className={`text-xs md:text-sm font-bold ${colorProfile.text}/70 flex items-center gap-1`}>
+                   將物品拖曳到分類中！
+                 </span>
+               )}
+               {(settings.gameMode === 'grid') && (
+                 <span className={`text-xs md:text-sm font-bold ${colorProfile.text}/70 flex items-center gap-1`}>
+                   依序點擊順序！
+                 </span>
+               )}
+            </div>
+             
+            {(settings.gameMode === 'whack' || settings.gameMode === 'memory' || settings.gameMode === 'sort') ? (
+              <div className="flex items-baseline gap-1 md:gap-2">
+                <span className={`text-lg md:text-xl font-bold ${colorProfile.text}/60`}>分數</span>
+                <span className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>{whackScore}</span>
+              </div>
+           ) : settings.gameMode === 'grid' ? (
+              <div className="flex items-baseline gap-1 md:gap-2">
+                  <span className={`text-lg md:text-xl font-bold ${colorProfile.text}/60`}>尋找</span>
+                  <span className={`text-3xl md:text-5xl font-black ${colorProfile.text} whitespace-nowrap`}>
+                      {nextGridNum > maxGrid ? '-' : (gridContentMap[nextGridNum - 1]?.replace('\n', ' ') || nextGridNum)}
+                  </span>
+              </div>
+           ) : (
+              <div className="flex items-baseline gap-1 md:gap-2">
+                 <span className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>{counted}</span>
+                 <span className={`text-lg md:text-2xl font-bold ${colorProfile.text}/60`}>/ {finalTargetCount}</span>
+              </div>
+            )}
+          </div>
+
+          {/* 遊戲操作區 */}
+          {settings.gameMode === 'memory' ? (
+            <div className="flex-1 relative p-2 flex justify-center items-center min-h-0 overflow-hidden">
+              <div className={`grid ${memColsClass} gap-2 md:gap-4 place-content-center justify-items-center w-max max-w-full h-max m-auto`}>
+                {memoryCards.map((card, i) => (
+                  <div 
+                    key={card.id}
+                    onPointerDown={(e) => handleCardClick(e, i)}
+                    className={`relative ${memSizeClass} aspect-square rounded-lg md:rounded-xl cursor-pointer transition-all duration-500 transform-gpu preserve-3d
+                      ${card.isMatched ? 'opacity-0 pointer-events-none scale-50' : 'opacity-100 hover:scale-105 active:scale-95'}
+                    `}
+                  >
+                    <div className={`absolute inset-0 w-full h-full rounded-lg md:rounded-xl transition-all duration-500 flex items-center justify-center
+                      ${card.isFlipped ? 'bg-white shadow-md border-2 md:border-4 border-teal-300' : `bg-teal-400 shadow-sm border-2 md:border-4 border-teal-500 ${colorProfile.active}`}
+                      ${card.isError ? 'bg-red-200 border-red-500 animate-shake' : ''}
+                    `}>
+                       {card.isFlipped || card.isMatched ? (
+                         <span className={`${memTextClass} drop-shadow-md`}>{card.icon}</span>
+                       ) : (
+                         <i className={`fa-solid fa-question ${memTextClass} text-white opacity-60`}></i>
+                       )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {memoryCards.length > 0 && memoryCards.every(c => c.isMatched) && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center animate-[fadeIn_0.5s_ease-in-out]">
+                  <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
+                  <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>完成！</h2>
+                </div>
+              )}
+            </div>
+          ) : settings.gameMode === 'sort' ? (
+             <div className="flex-1 relative flex flex-col justify-center items-center min-h-0">
+                 
+                 {/* 軌道區 */}
+                 <div className="relative w-full h-20 md:h-28 bg-white/60 border-y-4 border-dashed border-slate-400 flex items-center shadow-inner overflow-hidden mb-4 md:mb-6 z-20">
+                     <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 40px, #000 40px, #000 80px)' }}></div>
+                     {sortItems.map(item => {
+                         const isDragging = dragInfo?.id === item.id;
+                         if (isDragging) return null; 
+
+                         return (
+                             <div
+                                key={item.id}
+                                onPointerDown={(e) => handlePointerDownSortItem(e, item)}
+                                className="absolute flex items-center justify-center rounded-2xl border-2 w-14 h-14 md:w-20 md:h-20 select-none bg-white border-slate-300 shadow-md cursor-grab hover:scale-110"
+                                style={{
+                                    left: `${item.progress}%`,
+                                    top: '50%',
+                                    transform: 'translate(-50%, -50%)',
+                                    zIndex: 10,
+                                    transition: 'transform 0.2s'
+                                 }}
+                             >
+                                <span className="text-3xl md:text-5xl drop-shadow-sm pointer-events-none">{item.icon}</span>
+                             </div>
+                         );
+                     })}
+                 </div>
+
+                 {/* 分類箱區 */}
+                 <div className="flex justify-center items-start gap-2 md:gap-4 w-full px-2 z-10">
+                     {(settings.sortThemes || Object.keys(themes).slice(0,2)).map(themeKey => {
+                         const themeObj = themes[themeKey];
+                         if (!themeObj) return null;
+
+                         return (
+                           <div
+                              key={`bin-${themeKey}`}
+                              data-bin-theme={themeKey}
+                              data-player-id={playerId}
+                              className={`relative w-24 h-28 md:w-36 md:h-36 rounded-2xl border-4 shadow-xl flex flex-col items-center justify-center p-2 transition-all
+                                ${feedback.themeKey === themeKey && feedback.type === 'success' ? 'bg-green-100 border-green-500 scale-110 z-10' :
+                                  feedback.themeKey === themeKey && feedback.type === 'error' ? 'bg-red-100 border-red-500 animate-shake z-10' :
+                                  'bg-white border-slate-300 hover:bg-slate-50'}
+                              `}
+                           >
+                               <span className="text-3xl md:text-5xl mb-2 drop-shadow-md pointer-events-none">{themeObj.icons[0]}</span>
+                               <span className="text-sm md:text-lg font-bold text-slate-800 text-center leading-tight pointer-events-none truncate w-full">{themeObj.name}</span>
+                               <div className="absolute top-0 w-full h-3 bg-slate-200/50 rounded-t-xl border-b-2 border-slate-300 pointer-events-none"></div>
+
+                               {/* 動畫加扣分特效 */}
+                               {feedback.id && feedback.themeKey === themeKey && (
+                                  <div key={feedback.id} className={`absolute -top-10 md:-top-16 text-3xl md:text-4xl font-black drop-shadow-md animate-[ping_0.5s_ease-out] ${feedback.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
+                                      {feedback.type === 'success' ? '+10' : '-5'}
+                                  </div>
+                               )}
+                           </div>
+                         )
+                     })}
+                 </div>
+
+                 {isTimeUp && (
+                   <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center animate-[fadeIn_0.5s_ease-in-out]">
+                     <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
+                     <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>時間到！</h2>
+                     <p className={`text-2xl md:text-3xl font-bold mt-2 ${colorProfile.text}`}>{whackScore} 分</p>
+                    </div>
+                 )}
+              </div>
+          ) : settings.gameMode === 'grid' ? (
+              <div className="flex-1 relative p-1 md:p-2 flex items-center justify-center min-h-0 overflow-hidden">
+                  <div 
+                      className="mx-auto"
+                      style={{
+                          display: 'grid',
+                          gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+                          gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))`,
+                          gap: maxGrid >= 36 ? '2px' : '4px',
+                          width: '100%',
+                          height: '100%',
+                          maxWidth: '100%',
+                          maxHeight: '100%',
+                          aspectRatio: `${gridCols} / ${gridRows}`
+                      }}
+                  >
+                      {gridItems.map(num => (
+                          <div
+                              key={num}
+                              onPointerDown={(e) => handleGridClick(e, num)}
+                              className={`flex items-center justify-center rounded shadow-sm font-bold cursor-pointer transition-all border md:border-2 min-h-0 min-w-0 flex-col text-center p-1
+                                  ${num < nextGridNum ? 'bg-slate-200 text-slate-400 border-slate-300 scale-95 opacity-50 pointer-events-none' : `bg-white border-slate-300 active:scale-95 ${colorProfile.text}`}
+                              `}
+                          >
+                              <span className={`${getGridTextClass(maxGrid, settings.gridContent)} leading-tight whitespace-pre-wrap`}>
+                                {gridContentMap[num - 1] || num}
+                              </span>
+                          </div>
+                      ))}
+                  </div>
+                  {nextGridNum > maxGrid && (
+                      <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center animate-[fadeIn_0.5s_ease-in-out]">
+                        <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
+                        <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>完成！</h2>
+                      </div>
+                  )}
+              </div>
+          ) : settings.gameMode === 'whack' ? (
+            <div className="flex-1 relative p-1 flex items-center justify-center min-h-0 overflow-hidden">
+               <div className={`aspect-square w-full h-auto ${whackSizeClass} grid grid-cols-3 grid-rows-3 gap-1 md:gap-2 mx-auto`}>
+                  {holes.map((hole, i) => (
+                     <div key={`hole-${i}`} className="bg-black/10 rounded-2xl md:rounded-3xl shadow-inner relative flex items-center justify-center overflow-hidden border-b-4 border-black/20">
+                        <div
+                          onPointerDown={(e) => handleWhack(e, i)}
+                          className={`absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200 
+                            ${hole.active ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-[50%] scale-50 opacity-0'} 
+                            ${hole.isError ? 'bg-red-500/50' : 'active:bg-white/30'}
+                          `}
+                        >
+                            <span className={`${whackTextClass} drop-shadow-xl filter pb-1 md:pb-2`}>{hole.icon}</span>
+                        </div>
+                        
+                        {hole.hitEffect && (
+                          <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none animate-[ping_0.3s_ease-out] duration-300">
+                             <span className="absolute text-4xl md:text-6xl animate-ping opacity-70">🌟</span>
+                             <span className="text-3xl md:text-4xl font-black text-green-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] z-10">
+                               +10
+                             </span>
+                          </div>
+                        )}
+                     </div>
+                  ))}
+               </div>
+               
+               {isTimeUp && (
+                 <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center animate-[fadeIn_0.5s_ease-in-out]">
+                   <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
+                   <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>時間到！</h2>
+                   <p className={`text-2xl md:text-3xl font-bold mt-2 ${colorProfile.text}`}>{whackScore} 分</p>
+                 </div>
+               )}
+            </div>
+          ) : (
+            <div className="flex-1 relative p-2 md:p-4 flex flex-wrap content-center justify-center gap-1 md:gap-2 overflow-hidden min-h-0">
+               {items.map(item => (
+                <div
+                  key={item.id}
+                  onPointerDown={(e) => handleItemTap(e, item)}
+                  className={`select-none cursor-pointer transform transition-all duration-300 flex items-center justify-center rounded-2xl
+                    ${item.sizeClass} 
+                    ${item.isCounted ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100 hover:scale-110'}
+                    ${item.isError ? 'bg-red-400/50 scale-95 opacity-50' : 'active:scale-95'}
+                  `}
+                >
+                  <span className="drop-shadow-lg filter">{item.icon}</span>
+                </div>
+              ))}
+              {counted === finalTargetCount && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center animate-[fadeIn_0.5s_ease-in-out]">
+                  <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
+                  <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>完成！</h2>
+                </div>
+               )}
+            </div>
+          )}
+          
+          {/* 全域拖曳浮層 */}
+          {settings.gameMode === 'sort' && dragInfo && (
+              (() => {
+                  const draggedItem = sortItems.find(i => i.id === dragInfo.id);
+                  if (!draggedItem) return null;
+                  return (
+                      <div
+                          className="absolute flex items-center justify-center rounded-2xl border-2 w-14 h-14 md:w-20 md:h-20 select-none scale-125 z-[100] shadow-2xl border-cyan-500 bg-white/90 opacity-95 pointer-events-none"
+                          style={{
+                              left: `${dragInfo.x}px`,
+                              top: `${dragInfo.y}px`,
+                              transform: 'translate(-50%, -50%)',
+                              transition: 'none'
+                          }}
+                      >
+                          <span className="text-3xl md:text-5xl drop-shadow-sm pointer-events-none">{draggedItem.icon}</span>
+                      </div>
+                  );
+              })()
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 4. 結果畫面 
+    // ==========================================
+    function ResultScreen({ winners, scores, settings, onRestart, onHome }) {
+      let subtitle = '';
+      if (settings.gameMode === 'count') subtitle = '反應最快，數得最精準！';
+      if (settings.gameMode === 'find') subtitle = '火眼金睛，找得最快！';
+      if (settings.gameMode === 'whack') subtitle = '打地鼠大師，眼明手快！';
+      if (settings.gameMode === 'memory') subtitle = '過目不忘，記憶大師！';
+      if (settings.gameMode === 'sort') subtitle = '分類達人，眼疾手快！';
+      if (settings.gameMode === 'grid') subtitle = '眼疾手快，挑戰極限！';
+
+      return (
+        <div className="flex-1 flex items-center justify-center bg-slate-900 p-4 md:p-8 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 md:p-12 w-full max-w-2xl border-8 border-yellow-400 text-center transform animate-[zoomIn_0.5s_ease-out] my-auto">
+            <i className="fa-solid fa-trophy text-[6rem] md:text-[8rem] mx-auto mb-4 md:mb-6 text-yellow-500 animate-pulse block"></i>
+            
+            <h1 className="text-4xl md:text-5xl font-black text-slate-800 mb-2">遊戲結束！成績排名</h1>
+            <p className="text-lg md:text-xl text-slate-500 mb-6 md:mb-8">{subtitle}</p>
+
+            <div className="flex flex-col gap-3 md:gap-4 mb-8 md:mb-10">
+              {winners.map((winnerId, index) => {
+                const colorProfile = PLAYER_COLORS[winnerId];
+                const medals = ['🥇 第一名', '🥈 第二名', '🥉 第三名', '🏅 第四名'];
+                return (
+                  <div key={winnerId} className={`flex items-center justify-between p-4 md:p-5 rounded-2xl border-4 ${colorProfile.border} ${colorProfile.bg}`}>
+                    <div className="flex items-center gap-4">
+                      <span className={`text-2xl md:text-4xl font-bold ${colorProfile.text}`}>{medals[index]}</span>
+                      <span className={`text-2xl md:text-3xl font-black ${colorProfile.text}`}>玩家 {winnerId + 1}</span>
+                    </div>
+                    {(settings.gameMode === 'whack' || settings.gameMode === 'memory' || settings.gameMode === 'sort') && (
+                      <span className={`text-3xl md:text-4xl font-black ${colorProfile.text}`}>{scores[winnerId]} 分</span>
+                    )}
+                    {(settings.gameMode === 'grid' && scores[winnerId]) && (
+                      <span className={`text-3xl md:text-4xl font-black ${colorProfile.text}`}>{scores[winnerId]} 秒</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-4 justify-center">
+              <button onClick={onRestart} className="px-6 py-4 md:px-8 md:py-5 rounded-2xl text-2xl md:text-3xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center gap-3 bg-blue-600 hover:bg-blue-700">
+                <i className="fa-solid fa-rotate-left text-2xl md:text-3xl"></i> 再玩一次
+              </button>
+              <button onClick={onHome} className="px-6 py-4 md:px-8 md:py-5 rounded-2xl text-2xl md:text-3xl font-bold text-slate-700 bg-slate-200 shadow-lg hover:bg-slate-300 transition-all active:scale-95 flex items-center gap-3">
+                <i className="fa-solid fa-gear text-2xl md:text-3xl"></i> 更改設定
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 5. 後台管理畫面
+    // ==========================================
+    function AdminScreen({ themes, setThemes, onBack }) {
+      const fileInputRef = useRef(null);
+      const [editingKey, setEditingKey] = useState(null);
+      const [editForm, setEditForm] = useState({ key: '', name: '', iconsString: '' });
+      const [errorMsg, setErrorMsg] = useState('');
+      const [selectedCloudTheme, setSelectedCloudTheme] = useState('');
+
+      const handleExport = () => {
+        const dataStr = JSON.stringify(themes, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'touch-count-themes.json';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+      };
+
+      const handleImport = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const importedData = JSON.parse(event.target.result);
+            if (typeof importedData === 'object' && importedData !== null) {
+              const isValid = Object.values(importedData).every(t => t.name && Array.isArray(t.icons));
+              if (isValid) { 
+                setThemes(prev => ({...prev, ...importedData}));
+                setErrorMsg(''); 
+                alert('本機主題匯入成功！'); 
+              } 
+              else setErrorMsg('匯入的 JSON 格式不符合預期。');
+            }
+          } catch (err) { setErrorMsg('無法解析 JSON 檔案。'); }
+        };
+        reader.readAsText(file); e.target.value = null;
+      };
+
+      const handleCloudImport = async () => {
+        if (!selectedCloudTheme) {
+            setErrorMsg('請先選擇要匯入的雲端主題包！');
+            return;
+        }
+        
+        try {
+            const response = await fetch(selectedCloudTheme);
+            if (!response.ok) {
+                throw new Error(`找不到檔案或讀取失敗 (${response.status})`);
+            }
+            
+            const importedData = await response.json();
+            if (typeof importedData === 'object' && importedData !== null) {
+              const isValid = Object.values(importedData).every(t => t.name && Array.isArray(t.icons));
+              if (isValid) { 
+                setThemes(prev => ({...prev, ...importedData}));
+                setErrorMsg(''); 
+                alert(`「${selectedCloudTheme}」匯入成功！您可以點擊左上角的「回主畫面」開始遊戲囉！`);
+              } else {
+                setErrorMsg(`「${selectedCloudTheme}」格式不符合預期。`);
+              }
+            }
+        } catch (err) {
+            console.error("Fetch Error:", err);
+            setErrorMsg(`無法讀取 ${selectedCloudTheme}。請確認您已將該 JSON 檔案與 HTML 一起放在 GitHub 同一個資料夾下。`);
+        }
+      };
+
+      const startEdit = (key, theme) => {
+        setEditingKey(key);
+        setEditForm({ key: key, name: theme ? theme.name : '', iconsString: theme ? theme.icons.join('') : '' });
+        setErrorMsg('');
+      };
+
+      const saveEdit = () => {
+        if (!editForm.key.trim() || !editForm.name.trim() || !editForm.iconsString.trim()) { setErrorMsg('所有欄位皆為必填！'); return; }
+        const newIcons = Array.from(editForm.iconsString.trim()).filter(char => char.trim() !== '');
+        if (newIcons.length < 2) { setErrorMsg('至少需要輸入2個不同的圖示！'); return; }
+
+        setThemes(prev => {
+          const newThemes = { ...prev };
+          if (editingKey && editingKey !== editForm.key) delete newThemes[editingKey];
+          newThemes[editForm.key] = { name: editForm.name, icons: newIcons };
+          return newThemes;
+        });
+        setEditingKey(null); setErrorMsg('');
+      };
+
+      const deleteTheme = (key) => {
+        if (Object.keys(themes).length <= 1) { alert('至少需要保留一個主題！'); return; }
+        if (confirm('確定要刪除這個主題嗎？')) setThemes(prev => { const n = { ...prev }; delete n[key]; return n; });
+      };
+
+      return (
+        <div className="flex-1 bg-slate-100 flex flex-col p-4 md:p-8 overflow-hidden touch-auto">
+          <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 gap-4">
+            <div className="flex items-center gap-3">
+                <i className="fa-solid fa-gear text-3xl text-indigo-600"></i>
+                <h1 className="text-2xl md:text-3xl font-bold text-slate-800">主題管理庫</h1>
+            </div>
+            
+            <div className="flex flex-wrap gap-2 md:gap-3 w-full xl:w-auto justify-end">
+              <div className="flex items-center bg-purple-50 rounded-lg p-1 border border-purple-200 mr-2">
+                 <select 
+                    value={selectedCloudTheme} 
+                    onChange={(e) => setSelectedCloudTheme(e.target.value)}
+                    className="bg-transparent text-purple-800 font-bold px-2 py-1 outline-none text-sm cursor-pointer"
+                 >
+                    <option value="" disabled>選擇預設主題包...</option>
+                    {PRESET_CLOUD_THEMES.map(theme => (
+                        <option key={theme.filename} value={theme.filename}>{theme.label}</option>
+                    ))}
+                 </select>
+                 <button onClick={handleCloudImport} className="flex items-center gap-1 px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-bold transition-all text-sm">
+                    <i className="fa-solid fa-cloud-arrow-down"></i> 雲端匯入
+                 </button>
+              </div>
+
+              <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
+              <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-1 md:gap-2 px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 font-bold transition-all"><i className="fa-solid fa-file-arrow-up text-xl"></i> <span className="hidden md:inline">本機匯入</span></button>
+              <button onClick={handleExport} className="flex items-center gap-1 md:gap-2 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 font-bold transition-all"><i className="fa-solid fa-file-arrow-down text-xl"></i> <span className="hidden md:inline">備份匯出</span></button>
+              <button onClick={onBack} className="flex items-center gap-1 md:gap-2 px-3 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 font-bold transition-all ml-2 md:ml-4"><i className="fa-solid fa-house text-xl"></i> 回主畫面</button>
+            </div>
+          </div>
+
+          {errorMsg && <div className="mb-4 p-4 bg-red-100 text-red-700 rounded-xl font-bold text-center border border-red-300">{errorMsg}</div>}
+
+          <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden">
+            <div className="w-full md:w-2/3 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col overflow-hidden h-1/2 md:h-full">
+               <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-slate-700">已建立的主題</h2>
+                <button onClick={() => startEdit('', null)} className="flex items-center gap-1 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm shadow-sm"><i className="fa-solid fa-plus text-base"></i> 新增主題</button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-3 pr-2 hide-scrollbar">
+                {Object.entries(themes).map(([key, theme]) => (
+                  <div key={key} className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all ${editingKey === key ? 'border-indigo-400 bg-indigo-50' : 'border-slate-100 bg-slate-50 hover:border-slate-300'}`}>
+                    <div><div className="font-bold text-lg text-slate-800">{theme.name}</div><div className="text-slate-500 text-sm font-mono mt-1">代碼: {key}</div><div className="mt-2 text-2xl tracking-widest">{theme.icons.slice(0, 8).join('')}{theme.icons.length > 8 ? '...' : ''}</div></div>
+                    <div className="flex gap-1 md:flex-col md:gap-2">
+                      <button onClick={() => startEdit(key, theme)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg flex items-center justify-center w-10 h-10"><i className="fa-solid fa-pen text-xl"></i></button>
+                      <button onClick={() => deleteTheme(key)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg flex items-center justify-center w-10 h-10"><i className="fa-solid fa-trash-can text-xl"></i></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="w-full md:w-1/3 bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-1/2 md:h-full overflow-y-auto hide-scrollbar">
+              {editingKey !== null ? (
+                <div className="flex flex-col h-full animate-[slideIn_0.3s_ease-out]">
+                  <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-indigo-900">{editingKey === '' ? '✨ 新增主題' : '✏️ 編輯主題'}</h2><button onClick={() => setEditingKey(null)} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full w-10 h-10 flex justify-center items-center"><i className="fa-solid fa-xmark text-2xl"></i></button></div>
+                  <div className="space-y-4 md:space-y-6 flex-1">
+                    <div><label className="block text-sm font-bold text-slate-700 mb-2">英文代碼</label><input type="text" value={editForm.key} onChange={(e) => setEditForm({...editForm, key: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '')})} disabled={editingKey !== ''} placeholder="例如: shapes" className="w-full p-3 border-2 border-slate-200 rounded-xl focus:border-indigo-500 outline-none font-mono disabled:bg-slate-100" /></div>
+                    <div><label className="block text-sm font-bold text-slate-700 mb-2">顯示名稱</label><input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} placeholder="例如: 🟢 幾何圖形" className="w-full p-3 border-2 border-slate-200 rounded-xl focus:border-indigo-500 outline-none font-bold" /></div>
+                    <div><label className="block text-sm font-bold text-slate-700 mb-2">輸入圖示</label><textarea value={editForm.iconsString} onChange={(e) => setEditForm({...editForm, iconsString: e.target.value})} placeholder="輸入表情符號，如：🟢🟡🔴🔵🔷" className="w-full p-3 border-2 border-slate-200 rounded-xl focus:border-indigo-500 outline-none text-2xl md:text-3xl tracking-widest min-h-[100px] resize-none" /></div>
+                  </div>
+                  <button onClick={saveEdit} className="w-full py-4 mt-4 bg-indigo-600 text-white font-bold rounded-xl text-xl hover:bg-indigo-700 active:scale-95 flex items-center justify-center gap-2 shadow-md"><i className="fa-solid fa-floppy-disk text-2xl"></i> 儲存設定</button>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400"><i className="fa-solid fa-gear text-[5rem] mb-4 opacity-20"></i><p className="text-lg font-bold">請點擊左側列表的「編輯」</p><p className="text-sm">或點擊「新增主題」來開始設定</p></div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 掛載 React 應用程式
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
