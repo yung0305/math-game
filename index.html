@@ -949,12 +949,6 @@
       else if (totalCards > 4) memColsClass = 'grid-cols-3 md:grid-cols-3';
       else memColsClass = 'grid-cols-2 md:grid-cols-2';
 
-      // --- 打地鼠尺寸計算 ---
-      let whackSizeClass = 'max-w-[350px] md:max-w-[450px]';
-      let whackTextClass = 'text-5xl md:text-7xl';
-      if (settings.players > 2) { whackSizeClass = 'max-w-[220px] md:max-w-[300px]'; whackTextClass = 'text-4xl md:text-5xl'; }
-      else if (settings.players === 2) { whackSizeClass = 'max-w-[280px] md:max-w-[400px]'; whackTextClass = 'text-5xl md:text-6xl'; }
-
       // --- 格子趣樣式輔助計算 ---
       const maxGrid = settings.gridContent === 'number' ? settings.gridSize * settings.gridSize : (settings.gridTotalCount || 9);
       const gridCols = Math.ceil(Math.sqrt(maxGrid));
@@ -1037,7 +1031,7 @@
                   <div 
                     key={card.id}
                     onPointerDown={(e) => handleCardClick(e, i)}
-                    className={`relative ${memSizeClass} aspect-square rounded-lg md:rounded-xl cursor-pointer transition-all duration-500 transform-gpu preserve-3d
+                    className={`relative ${memSizeClass} aspect-[3/4] rounded-lg md:rounded-xl cursor-pointer transition-all duration-500 transform-gpu preserve-3d
                       ${card.isMatched ? 'opacity-0 pointer-events-none scale-50' : 'opacity-100 hover:scale-105 active:scale-95'}
                     `}
                   >
@@ -1082,7 +1076,7 @@
                                     transform: 'translate(-50%, -50%)',
                                     zIndex: 10,
                                     transition: 'transform 0.2s'
-                                 }}
+                                }}
                              >
                                 <span className="text-3xl md:text-5xl drop-shadow-sm pointer-events-none">{item.icon}</span>
                              </div>
@@ -1127,7 +1121,7 @@
                      <i className={`fa-solid fa-trophy text-[6rem] md:text-[8rem] ${colorProfile.text} mb-4 animate-bounce`}></i>
                      <h2 className={`text-4xl md:text-6xl font-black ${colorProfile.text}`}>時間到！</h2>
                      <p className={`text-2xl md:text-3xl font-bold mt-2 ${colorProfile.text}`}>{whackScore} 分</p>
-                    </div>
+                   </div>
                  )}
               </div>
           ) : settings.gameMode === 'grid' ? (
@@ -1168,10 +1162,10 @@
                   )}
               </div>
           ) : settings.gameMode === 'whack' ? (
-            <div className="flex-1 relative p-1 flex items-center justify-center min-h-0 overflow-hidden">
-               <div className={`aspect-square w-full h-auto ${whackSizeClass} grid grid-cols-3 grid-rows-3 gap-1 md:gap-2 mx-auto`}>
+            <div className="flex-1 relative p-1 md:p-2 flex items-center justify-center min-h-0 overflow-hidden">
+               <div className="aspect-square w-full max-w-full max-h-full grid grid-cols-3 grid-rows-3 gap-1 md:gap-2 mx-auto">
                   {holes.map((hole, i) => (
-                     <div key={`hole-${i}`} className="bg-black/10 rounded-2xl md:rounded-3xl shadow-inner relative flex items-center justify-center overflow-hidden border-b-4 border-black/20">
+                     <div key={`hole-${i}`} className="bg-black/10 rounded-xl md:rounded-3xl shadow-inner relative flex items-center justify-center overflow-hidden border-b-4 border-black/20">
                         <div
                           onPointerDown={(e) => handleWhack(e, i)}
                           className={`absolute inset-0 flex items-center justify-center cursor-pointer transition-all duration-200 
@@ -1179,13 +1173,13 @@
                             ${hole.isError ? 'bg-red-500/50' : 'active:bg-white/30'}
                           `}
                         >
-                            <span className={`${whackTextClass} drop-shadow-xl filter pb-1 md:pb-2`}>{hole.icon}</span>
+                            <span className="text-5xl md:text-7xl lg:text-[6rem] drop-shadow-xl filter">{hole.icon}</span>
                         </div>
                         
                         {hole.hitEffect && (
                           <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none animate-[ping_0.3s_ease-out] duration-300">
-                             <span className="absolute text-4xl md:text-6xl animate-ping opacity-70">🌟</span>
-                             <span className="text-3xl md:text-4xl font-black text-green-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] z-10">
+                             <span className="absolute text-5xl md:text-7xl animate-ping opacity-70">🌟</span>
+                             <span className="text-3xl md:text-5xl font-black text-green-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] z-10">
                                +10
                              </span>
                           </div>
