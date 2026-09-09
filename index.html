@@ -532,6 +532,12 @@
       const [isTimeUp, setIsTimeUp] = useState(false);
       const [gridElapsedMs, setGridElapsedMs] = useState(0);
 
+      // --- 計時器拖曳狀態 ---
+      const [timerPos, setTimerPos] = useState({ x: window.innerWidth / 2, y: 40 });
+      const [isDraggingTimer, setIsDraggingTimer] = useState(false);
+      const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+      const timerRef = useRef(null);
+
       useEffect(() => {
         if (settings.gameMode !== 'whack' && settings.gameMode !== 'sort') return;
         if (timeLeft > 0) {
@@ -551,6 +557,44 @@
         }
       }, [settings.gameMode]);
 
+      // --- 計時器拖曳處理 ---
+      const handleTimerPointerDown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = timerRef.current.getBoundingClientRect();
+          setIsDraggingTimer(true);
+          setDragOffset({
+              x: e.clientX - rect.left - rect.width / 2,
+              y: e.clientY - rect.top - rect.height / 2
+          });
+          timerRef.current.setPointerCapture(e.pointerId);
+      };
+
+      const handleTimerPointerMove = (e) => {
+          if (!isDraggingTimer) return;
+          
+          // 計算新的位置，並限制在視窗範圍內
+          const newX = e.clientX - dragOffset.x;
+          const newY = e.clientY - dragOffset.y;
+          const rect = timerRef.current.getBoundingClientRect();
+          
+          const maxX = window.innerWidth - rect.width / 2;
+          const minX = rect.width / 2;
+          const maxY = window.innerHeight - rect.height / 2;
+          const minY = rect.height / 2;
+
+          setTimerPos({
+              x: Math.max(minX, Math.min(maxX, newX)),
+              y: Math.max(minY, Math.min(maxY, newY))
+          });
+      };
+
+      const handleTimerPointerUp = (e) => {
+          if (!isDraggingTimer) return;
+          setIsDraggingTimer(false);
+          timerRef.current.releasePointerCapture(e.pointerId);
+      };
+
       const getGridLayout = () => {
         switch (settings.players) {
           case 1: return 'grid-cols-1 grid-rows-1';
@@ -568,16 +612,42 @@
           </button>
 
           {(settings.gameMode === 'whack' || settings.gameMode === 'sort') && (
-            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 ${settings.gameMode === 'sort' ? 'border-cyan-500' : 'border-amber-500'} flex items-center gap-3`}>
-              <i className={`fa-regular fa-clock text-3xl ${timeLeft <= 5 ? 'text-red-500 animate-pulse' : (settings.gameMode === 'sort' ? 'text-cyan-600' : 'text-amber-600')}`}></i>
-              <span className={`text-4xl font-black ${timeLeft <= 5 ? 'text-red-600' : (settings.gameMode === 'sort' ? 'text-cyan-700' : 'text-amber-700')}`}>{timeLeft}</span>
+            <div 
+                ref={timerRef}
+                onPointerDown={handleTimerPointerDown}
+                onPointerMove={handleTimerPointerMove}
+                onPointerUp={handleTimerPointerUp}
+                onPointerCancel={handleTimerPointerUp}
+                className={`absolute z-[100] bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 ${settings.gameMode === 'sort' ? 'border-cyan-500' : 'border-amber-500'} flex items-center gap-3 cursor-grab select-none touch-none ${isDraggingTimer ? 'cursor-grabbing scale-105' : ''}`}
+                style={{
+                    left: `${timerPos.x}px`,
+                    top: `${timerPos.y}px`,
+                    transform: 'translate(-50%, -50%)',
+                    transition: isDraggingTimer ? 'none' : 'transform 0.1s'
+                }}
+            >
+              <i className={`fa-regular fa-clock text-3xl ${timeLeft <= 5 ? 'text-red-500 animate-pulse' : (settings.gameMode === 'sort' ? 'text-cyan-600' : 'text-amber-600')} pointer-events-none`}></i>
+              <span className={`text-4xl font-black ${timeLeft <= 5 ? 'text-red-600' : (settings.gameMode === 'sort' ? 'text-cyan-700' : 'text-amber-700')} pointer-events-none`}>{timeLeft}</span>
             </div>
           )}
           
           {settings.gameMode === 'grid' && (
-            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 border-fuchsia-500 flex items-center gap-3`}>
-              <i className="fa-solid fa-stopwatch text-3xl text-fuchsia-600"></i>
-              <span className="text-4xl font-black text-fuchsia-700">{(gridElapsedMs / 1000).toFixed(1)}</span>
+            <div 
+                ref={timerRef}
+                onPointerDown={handleTimerPointerDown}
+                onPointerMove={handleTimerPointerMove}
+                onPointerUp={handleTimerPointerUp}
+                onPointerCancel={handleTimerPointerUp}
+                className={`absolute z-[100] bg-white/90 backdrop-blur-md px-6 py-2 rounded-full shadow-lg border-4 border-fuchsia-500 flex items-center gap-3 cursor-grab select-none touch-none ${isDraggingTimer ? 'cursor-grabbing scale-105' : ''}`}
+                style={{
+                    left: `${timerPos.x}px`,
+                    top: `${timerPos.y}px`,
+                    transform: 'translate(-50%, -50%)',
+                    transition: isDraggingTimer ? 'none' : 'transform 0.1s'
+                }}
+            >
+              <i className="fa-solid fa-stopwatch text-3xl text-fuchsia-600 pointer-events-none"></i>
+              <span className="text-4xl font-black text-fuchsia-700 pointer-events-none">{(gridElapsedMs / 1000).toFixed(1)}</span>
             </div>
           )}
 
@@ -1031,7 +1101,7 @@
                   <div 
                     key={card.id}
                     onPointerDown={(e) => handleCardClick(e, i)}
-                    className={`relative ${memSizeClass} aspect-[3/4] rounded-lg md:rounded-xl cursor-pointer transition-all duration-500 transform-gpu preserve-3d
+                    className={`relative ${memSizeClass} aspect-square rounded-lg md:rounded-xl cursor-pointer transition-all duration-500 transform-gpu preserve-3d
                       ${card.isMatched ? 'opacity-0 pointer-events-none scale-50' : 'opacity-100 hover:scale-105 active:scale-95'}
                     `}
                   >
